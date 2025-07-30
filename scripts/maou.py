@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import requests
+from PIL import Image
 
 useproxy = False
 proxyaddr = ''
@@ -312,7 +313,7 @@ def zzmwdownloader(overwrite):
                     continue
                 if fname.endswith(".json"):
                     out_file.write(f"{url}\n   out={fname}\n\n")
-                    if fname.startswith("adv") or "still" in fname:
+                    if fname.startswith("adv") or ("still" in fname and "anim" in fname):
                         nosuffix = fname.removesuffix('.json')
                         out_file.write(f"{url.replace('en', 'cn')}\n   out={nosuffix}-cn.json\n\n")
                         out_file.write(f"{url.replace('en', 'tw')}\n   out={nosuffix}-tw.json\n\n")
@@ -352,6 +353,26 @@ def zzmwdownloader(overwrite):
         getpngmain()
         rename_atlas_txt()
         organize_files_by_prefix(spine_prefixes, adv_names)
+    
+    def postprocess():
+        config = json.load(open(f"{DOWNLOAD_DIR}/config.json", "r", encoding="utf-8"))
+        for asset_id, asset_info in config.get("assets", {}).items():
+            name: str = asset_info.get("name", "")
+            if name.startswith("king_adv") and name.endswith(".png"):
+                frames = asset_info.get("data", {}).get("frames", {})
+                noprefix = name.removeprefix("king_adv")
+                folder = "adv" + noprefix[:noprefix.index("_")]
+                og_img = os.path.join(DOWNLOAD_DIR, folder, name)
+                for frame_id, frame_info in frames.items():
+                    frame_name = frame_info.get("name", "")
+                    rect = frame_info.get("rect", [])
+                    Image.open(og_img).crop((1, 1, rect[2], rect[3])).save(os.path.join(DOWNLOAD_DIR, folder, frame_name))
+                    print(f"[+] 处理完毕: {name} → {frame_name}")
+                os.remove(og_img)
+            else:
+                continue
+
     mainload()
+    postprocess()
 
 zzmwdownloader(False)
