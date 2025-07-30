@@ -10,7 +10,7 @@ useproxy = False
 proxyaddr = ''
 
 def zzmwdownloader(overwrite):
-    VALID_SUFFIXES = ('.basis', '.json', '.atlas.txt')
+    VALID_SUFFIXES = ('.basis', '.json', '.atlas.txt', '.mp3')
     DOWNLOAD_DIR = "resdownload/转职魔王X"
     TEMP_DIR = os.path.join(DOWNLOAD_DIR, "temp")
     BASISU_EXE = "basis_universal/bin/basisu"
@@ -120,6 +120,9 @@ def zzmwdownloader(overwrite):
         try:
             response = requests.get(config_url, headers=headers)
             response.raise_for_status()
+            with open(f"{DOWNLOAD_DIR}/config.json", "w", encoding="utf-8") as f:
+                f.write(response.text)
+            print("config.json 已保存")
             return response.json()
         except Exception as e:
             print(f"获取config.json数据出错: {e}")
@@ -187,7 +190,7 @@ def zzmwdownloader(overwrite):
 
         clean_temp()
 
-    def organize_files_by_prefix(spine_prefixes):
+    def organize_files_by_prefix(spine_prefixes, adv_names):
         for prefix in spine_prefixes:
             folder_path = os.path.join(DOWNLOAD_DIR, prefix)
             os.makedirs(folder_path, exist_ok=True)
@@ -196,6 +199,18 @@ def zzmwdownloader(overwrite):
                 if f == prefix:
                     continue
                 if f.startswith(prefix) and os.path.isfile(os.path.join(DOWNLOAD_DIR, f)):
+                    src = os.path.join(DOWNLOAD_DIR, f)
+                    dst = os.path.join(folder_path, f)
+                    shutil.move(src, dst)
+                    print(f"[+] 移动: {f} → {folder_path}")
+        for adv_name in adv_names:
+            folder_path = os.path.join(DOWNLOAD_DIR, "adv" + adv_name)
+            os.makedirs(folder_path, exist_ok=True)
+
+            for f in os.listdir(DOWNLOAD_DIR):
+                if f == adv_name:
+                    continue
+                if adv_name in f and os.path.isfile(os.path.join(DOWNLOAD_DIR, f)):
                     src = os.path.join(DOWNLOAD_DIR, f)
                     dst = os.path.join(folder_path, f)
                     shutil.move(src, dst)
@@ -251,7 +266,7 @@ def zzmwdownloader(overwrite):
                 continue
 
             url = None
-            filename = None
+            filename: str = None
 
             basis_variant = file_info.get("variants", {}).get("basis")
             if basis_variant:
@@ -268,27 +283,48 @@ def zzmwdownloader(overwrite):
             if not filename.endswith(VALID_SUFFIXES):
                 continue
 
+            NO_DOWNLOAD_SUBSTRINGS = [
+                "unit_enemy", "buf", "usk", "rule", "Help", "gacha", "thumb", "hit", "aoe", "attack",
+                "recommend", "VIP", "unit_chara", "login", "sale", "arena", "ef", "sef", "skill", "BGM",
+                "charagrowth", "unit_mokujin", "limited", "pass"
+            ]
+            if any(sub in filename for sub in NO_DOWNLOAD_SUBSTRINGS):
+                continue
+
+            # Skil non-H
+            if filename.endswith(".mp3"):
+                if filename[filename.find("_")+1] == "E":
+                    continue
+                if (filename.startswith("RIT") or filename.startswith("CAT")):
+                    continue
+                if len(filename) == 7 and all(c.isdigit() for c in filename[:3]):
+                    continue
+
             full_url = f"{cdn_prefix}/{url}"  #cdn_prefix + url
             print(full_url)
+
             file_map[filename] = full_url
 
         with open("zzmw.txt", "w", encoding="utf-8") as out_file:
             for fname, url in file_map.items():
                 url: str
-                if "unit_enemy" in fname or fname.endswith(".basis") or "Help" in fname:
+                if fname.endswith(".basis"):
                     continue
                 if fname.endswith(".json"):
                     out_file.write(f"{url}\n   out={fname}\n\n")
-                    if fname.startswith("adv"):
-                        out_file.write(f"{url.replace('en', 'cn')}\n   out={fname}-cn.json\n\n")
-                        out_file.write(f"{url.replace('en', 'tw')}\n   out={fname}-tw.json\n\n")
+                    if fname.startswith("adv") or "still" in fname:
+                        nosuffix = fname.removesuffix('.json')
+                        out_file.write(f"{url.replace('en', 'cn')}\n   out={nosuffix}-cn.json\n\n")
+                        out_file.write(f"{url.replace('en', 'tw')}\n   out={nosuffix}-tw.json\n\n")
                 else:
                     print(f"跳过非json文件: {fname}")
 
         os.system(f"aria2c -i zzmw.txt -j 16 -s 16 -x 16 --check-certificate=false --auto-file-renaming=false {f'{proxyaddr} ' if useproxy else ''}{'--allow-overwrite=true ' if overwrite else ''}--dir={DOWNLOAD_DIR}")
         print("正在解析json...")
         spine_prefixes = set()
+        adv_names = set()
         for fname in os.listdir(DOWNLOAD_DIR):
+            fname: str
             if fname.endswith(".json"):
                 fpath = os.path.join(DOWNLOAD_DIR, fname)
                 try:
@@ -297,25 +333,25 @@ def zzmwdownloader(overwrite):
                         do_download = "skeleton" in j and isinstance(j["skeleton"], dict) and "spine" in j["skeleton"]
                         if do_download:
                             name_prefix = os.path.splitext(fname)[0]
-                            spine_prefixes.add(name_prefix)
-                        else:
+                            if "cn" not in fname and "tw" not in fname:
+                                spine_prefixes.add(name_prefix)
+                        if "entities" in j:
                             os.remove(fpath)
+                    if fname.startswith("adv"):
+                        adv_names.add(fname[3:fname.index("_")])
                 except Exception:
-                    os.remove(fpath)
+                    pass
 
         with open("zzmw.txt", "w", encoding="utf-8") as out_file:
             for fname, url in file_map.items():
                 if fname.endswith(".json"):
                     continue
-                for prefix in spine_prefixes:
-                    if fname.startswith(prefix):
-                        out_file.write(f"{url}\n   out={fname}\n\n")
-                        break
+                out_file.write(f"{url}\n   out={fname}\n\n")
 
         os.system(f"aria2c -i zzmw.txt -j 32 -s 16 -x 16 --check-certificate=false --auto-file-renaming=false {f'{proxyaddr} ' if useproxy else ''}{'--allow-overwrite=true ' if overwrite else ''}--dir={DOWNLOAD_DIR}")
         getpngmain()
         rename_atlas_txt()
-        organize_files_by_prefix(spine_prefixes)
+        organize_files_by_prefix(spine_prefixes, adv_names)
     mainload()
 
 zzmwdownloader(False)
